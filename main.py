@@ -33,7 +33,7 @@ with st.sidebar:
     project_management_sidebar(OUTPUT_ROOT)
 
 # Tabs for Features
-tabs = st.tabs(["Link Scraper", "WARC Scraper", "PDF Scraper", "Token Estimator", "Compressor", "Dashboard", "Custom Link Scraper", "Other Features (Coming Soon)"]) 
+tabs = st.tabs(["Link Scraper", "WARC Scraper", "PDF Scraper", "Token Estimator", "Compressor", "Dashboard", "Custom Link Scraper", "Paginated Scraper", "Other Features (Coming Soon)"])
 
 # Link Scraper Tab
 with tabs[0]:

@@ -3,6 +3,8 @@ import csv
 import time
 import logging
 from selenium import webdriver
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.action_chains import ActionChains
 
 
 def setup_webdriver(output_folder):
@@ -20,10 +22,32 @@ def setup_webdriver(output_folder):
         "plugins.always_open_pdf_externally": True,
         "safebrowsing.enabled": True,
         "profile.default_content_setting_values.automatic_downloads": 1,
+        "printing.default_destination_selection_rules": {
+            "kind": "pdf",
+            "namePattern": "Save as PDF"
+        },
+        "printing.print_preview_sticky_settings.appState": {
+            "recentDestinations": [{
+                "id": "Save as PDF",
+                "origin": "local",
+                "account": ""
+            }],
+            "selectedDestinationId": "Save as PDF",
+            "version": 2,
+            "isHeaderFooterEnabled": False,
+            "isLandscapeEnabled": False,
+            "marginsType": 0,
+            "scaling": 100,
+            "scalingType": 3,
+            "isCssBackgroundEnabled": True,
+            "mediaSize": {"height_microns": 297000, "width_microns": 210000}
+        }
     }
     options.add_experimental_option("prefs", prefs)
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--kiosk-printing")
+    options.add_argument("--disable-print-preview")
 
     return webdriver.Chrome(options=options)
 
@@ -53,10 +77,96 @@ def scrape_from_list(link_list, output_folder, update_progress=None):
     total_links = len(link_list)
     for idx, link in enumerate(link_list):
         try:
+            # Check if PDF already exists
+            expected_filename = os.path.join(output_folder, f"document_{idx + 1}.pdf")
+            if os.path.exists(expected_filename):
+                logging.info(f"PDF already exists for {link}, skipping...")
+                if update_progress:
+                    update_progress(idx + 1, total_links, f"Skipped existing PDF {idx + 1}/{total_links}")
+                continue
+
             driver.get(link)
             logging.info(f"{idx + 1}/{total_links} - Downloading PDF from {link}")
+            initial_files = set(os.listdir(output_folder))
 
-            time.sleep(2)  # Allow time for download to start
+            # Look for direct download links first
+            download_selectors = [
+                "a[href$='.pdf']",
+                "a[href*='pdf']",
+                "a[download]",
+                "a[href*='download']"
+            ]
+
+            # Try direct download links first
+            pdf_downloaded = False
+            for selector in download_selectors:
+                try:
+                    elements = driver.find_elements("css selector", selector)
+                    if elements:
+                        elements[0].click()
+                        time.sleep(2)
+                        pdf_downloaded = True
+                        break
+                except Exception as e:
+                    continue
+
+            # If no direct download link found, try print dialog approach
+            if not pdf_downloaded:
+                # Try to trigger print dialog with keyboard shortcut first
+                actions = ActionChains(driver)
+                actions.key_down(Keys.COMMAND).send_keys('p').key_up(Keys.COMMAND).perform()
+                time.sleep(2)
+
+                # Press Enter to confirm print dialog and wait longer
+                actions.send_keys(Keys.RETURN).perform()
+                time.sleep(5)  # Increased wait time for dialog processing
+
+                # Only try print selectors if keyboard shortcut didn't work
+                if not any(f.endswith('.pdf') or f.endswith('.crdownload') for f in os.listdir(output_folder)):
+                    print_selectors = [
+                        ".download.av a[onclick*='print']",
+                        "a[onclick*='print']",
+                        ".fa-print",
+                        ".fa-file-pdf-o",
+                        "[onclick*='print']"
+                    ]
+
+                    for selector in print_selectors:
+                        try:
+                            elements = driver.find_elements("css selector", selector)
+                            if elements:
+                                elements[0].click()
+                                time.sleep(3)  # Increased wait time
+                                actions.send_keys(Keys.RETURN).perform()
+                                time.sleep(3)  # Wait after confirming dialog
+                                break
+                        except Exception as e:
+                            continue
+
+            # Wait for new file to appear
+            max_wait = 30
+            start_wait = time.time()
+            new_file_found = False
+
+            while time.time() - start_wait < max_wait:
+                current_files = set(os.listdir(output_folder))
+                new_files = current_files - initial_files
+                if new_files:
+                    # Move and rename the new file
+                    for new_file in new_files:
+                        if new_file.endswith('.pdf') or new_file.endswith('.crdownload'):
+                            source_path = os.path.join(output_folder, new_file)
+                            if os.path.exists(expected_filename):
+                                os.remove(expected_filename)
+                            if new_file.endswith('.crdownload'):
+                                wait_for_download(output_folder)
+                            if os.path.exists(source_path):
+                                os.rename(source_path, expected_filename)
+                            new_file_found = True
+                            break
+                if new_file_found:
+                    break
+                time.sleep(1)
 
             # Update progress
             if update_progress:

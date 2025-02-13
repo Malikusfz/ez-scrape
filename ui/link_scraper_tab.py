@@ -148,3 +148,39 @@ def link_scraper_tab(output_root):
                     st.warning("No links found during scraping.")
             except Exception as e:
                 st.error(f"Scraping failed: {e}")
+    # Add Single Link Section
+    st.write("### Add Single Link")
+    single_link = st.text_input(
+        "Enter a single link to add",
+        placeholder="https://example.com/page",
+        help="Enter a complete URL to add to the links collection"
+    )
+
+    if st.button("Add Link"):
+        if not single_link:
+            st.error("Please enter a valid link.")
+        else:
+            try:
+                links_folder = os.path.join(
+                    output_root,
+                    st.session_state["current_project"],
+                    st.session_state["current_subproject"],
+                    "links"
+                )
+                os.makedirs(links_folder, exist_ok=True)
+                links_csv = os.path.join(links_folder, "links.csv")
+                
+                # Create new DataFrame or append to existing
+                if os.path.exists(links_csv):
+                    df = pd.read_csv(links_csv)
+                    if single_link not in df['link'].values:
+                        df = pd.concat([df, pd.DataFrame([{'link': single_link}])], ignore_index=True)
+                        df.to_csv(links_csv, index=False)
+                        st.success("Link added successfully!")
+                    else:
+                        st.warning("Link already exists in the collection.")
+                else:
+                    pd.DataFrame([{'link': single_link}]).to_csv(links_csv, index=False)
+                    st.success("Link added successfully!")
+            except Exception as e:
+                st.error(f"Failed to add link: {e}")

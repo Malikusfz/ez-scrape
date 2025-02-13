@@ -32,6 +32,14 @@ def get_project_level_stats(output_root):
             total_files = 0
             total_tokens = 0
             total_bytes = 0
+            total_compressed_size = 0
+
+            # Calculate size of compressed files in project's compressed_files directory
+            compressed_files_dir = os.path.join(project_path, "compressed_files")
+            if os.path.exists(compressed_files_dir):
+                for file in os.listdir(compressed_files_dir):
+                    if file.endswith(".zip") or file.endswith(".warc.gz"):
+                        total_compressed_size += os.path.getsize(os.path.join(compressed_files_dir, file))
 
             for subproject in os.listdir(project_path):
                 subproject_path = os.path.join(project_path, subproject)
@@ -57,7 +65,7 @@ def get_project_level_stats(output_root):
                     total_tokens += get_token_count_from_csv(tokens_csv_path)
 
             # Add a row summarizing the project
-            project_data.append([project, total_files, total_tokens, total_bytes])
+            project_data.append([project, total_files, total_tokens, total_compressed_size, total_bytes])
 
     return project_data
 
@@ -71,6 +79,9 @@ def get_subproject_level_stats(output_root):
         project_path = os.path.join(output_root, project)
         if os.path.isdir(project_path):
             for subproject in os.listdir(project_path):
+                # Skip compressed_files directory
+                if subproject == "compressed_files":
+                    continue
                 subproject_path = os.path.join(project_path, subproject)
                 if os.path.isdir(subproject_path):
                     total_files = 0

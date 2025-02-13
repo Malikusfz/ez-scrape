@@ -69,26 +69,144 @@ class WarcScraper:
             self._log(f"Error processing CSV {csv_path}: {e}")
 
 
-    async def crawl_and_save_to_warc(self,links, warc_folder,update_progress=None):
+    def _extract_page_links(self, soup, base_url):
         """
-        Crawl a list of links using crawl4ai and save the content as WARC files.
+        Extract pagination links from the page-links div container.
         """
-        # Ensure the folder exists
+        page_links = []
+        page_links_div = soup.find('div', class_='page-links')
+        if page_links_div:
+            for link in page_links_div.find_all('a', class_='post-page-numbers'):
+                href = link.get('href')
+                if href:
+                    page_links.append(href)
+        return page_links
+
+    async def crawl_and_save_to_warc(self, links, warc_folder, update_progress=None, next_button_selector=None):
+        # Common next page button selectors - Enhanced with JavaScript and AJAX patterns
+        common_next_selectors = [
+            # Standard navigation elements
+            'a.next', 'a.pagination-next', 'a[rel="next"]',
+            'a:contains("Next")', 'a:contains("next")',
+            'button.next', 'button:contains("Next")',
+            '.pagination .next', '.pagination-next',
+            'nav.pagination a[aria-label="Next"]',
+            
+            # JavaScript/AJAX specific selectors
+            '[data-page="next"]', '[data-action="next"]',
+            '[data-role="next"]', '[data-nav="next"]',
+            '.load-more', '#loadMore', '#load-more',
+            '.show-more', '#showMore', '#show-more',
+            '[data-load-more]', '[data-show-more]',
+            
+            # Common class patterns
+            '.next-page', '.nextPage', '.next_page',
+            '.pagination-next', '.paginationNext',
+            '.pagination__next', '.pagination-item--next',
+            
+            # Semantic selectors
+            '[aria-label*="Next"]', '[title*="Next"]',
+            '[aria-label*="next"]', '[title*="next"]',
+            
+            # Icon-based navigation
+            '.fa-chevron-right', '.fa-arrow-right',
+            '.icon-next', '.icon-arrow-right'
+        ]
+        
         os.makedirs(warc_folder, exist_ok=True)
         total_links=len(links)
         async with aiohttp.ClientSession() as session:
-            for idx,url in enumerate(links,start=1):
+            for idx, url in enumerate(links, start=1):
                 try:
-                    # Asynchronous GET request
-                    async with session.get(url, ssl=False) as response:
-                        response_text = await response.text()
-                        ip_address = socket.gethostbyname(url.split("/")[2])
+                    current_url = url
+                    page_num = 1
+                    all_content = []
+                    
+                    while True:
+                        async with session.get(current_url, ssl=False) as response:
+                            response_text = await response.text()
+                            all_content.append(response_text)
+                            
+                            # Try to find next page links
+                            from bs4 import BeautifulSoup
+                            soup = BeautifulSoup(response_text, 'html.parser')
+                            
+                            # First try to extract page links from page-links container
+                            page_links = self._extract_page_links(soup, current_url)
+                            if page_links:
+                                # Get the next page URL based on current page number
+                                if page_num < len(page_links):
+                                    next_url = page_links[page_num]
+                                    current_url = next_url
+                                    page_num += 1
+                                    if update_progress:
+                                        update_progress(idx, len(links), f"Processing {url} - Page {page_num}")
+                                    continue
+                            
+                            # If no page-links found, try other methods
+                            next_link = None
+                            
+                            # Try user-provided selector
+                            if next_button_selector:
+                                next_link = soup.select_one(next_button_selector)
+                            
+                            # Then try common selectors
+                            if not next_link:
+                                for selector in common_next_selectors:
+                                    elements = soup.select(selector)
+                                    for element in elements:
+                                        if element.get('onclick') or element.get('data-url') or \
+                                           element.get('href') or element.get('data-href'):
+                                            next_link = element
+                                            break
+                                    if next_link:
+                                        break
+                            
+                            # Extract the next URL from various attributes
+                            next_url = None
+                            if next_link:
+                                # Try to get URL from common attributes
+                                next_url = next_link.get('data-url') or \
+                                          next_link.get('data-href') or \
+                                          next_link.get('href')
+                                
+                                # Handle onclick JavaScript handlers
+                                if not next_url and next_link.get('onclick'):
+                                    onclick = next_link['onclick']
+                                    # Extract URL from common JavaScript patterns
+                                    import re
+                                    url_patterns = [
+                                        r"window\.location(?:\.href)?\s*=\s*['\"]([^'\"]+)['\"]"                                    
+                                    ]
+                                    for pattern in url_patterns:
+                                        match = re.search(pattern, onclick)
+                                        if match:
+                                            next_url = next(filter(None, match.groups()), None)
+                                            break
+                            
+                            if next_url:
+                                # Handle relative URLs
+                                if not next_url.startswith('http'):
+                                    from urllib.parse import urljoin
+                                    next_url = urljoin(current_url, next_url)
+                                
+                                current_url = next_url
+                                page_num += 1
+                                if update_progress:
+                                    update_progress(idx, len(links), f"Processing {url} - Page {page_num}")
+                                continue
+                            
+                            break
+                    
+                    # Combine all content for the main URL
+                    combined_content = '\n'.join(all_content)
+                    ip_address = socket.gethostbyname(url.split("/")[2])
 
-                        # Sanitize the URL for file naming
-                        sanitized_url = url.removesuffix("/").split("/")[-1].replace(".html", "").replace("/", "_").replace(":", "_")
-                        warc_file_path = os.path.join(warc_folder, f"{sanitized_url}.warc")
+                    # Sanitize the URL for file naming
+                    sanitized_url = url.removesuffix("/").split("/")[-1].replace(".html", "").replace("/", "_").replace(":", "_")
+                    warc_file_path = os.path.join(warc_folder, f"{sanitized_url}.warc")
 
-                        with open(warc_file_path, "wb") as f:
+                    with open(warc_file_path, "wb") as f:
                             writer = WARCWriter(filebuf=f, gzip=False)
 
                             # Request record
@@ -111,7 +229,7 @@ class WarcScraper:
                                 ("Server", response.headers.get("Server", "Unknown")),
                             ]
                             http_response_headers = StatusAndHeaders(response_status_line, response_headers)
-                            response_payload = BytesIO(response_text.encode("utf-8"))
+                            response_payload = BytesIO(combined_content.encode("utf-8"))
                             response_record = writer.create_warc_record(url, "response", payload=response_payload, http_headers=http_response_headers)
                             response_record.rec_headers.add_header("WARC-Concurrent-To", request_record.rec_headers.get_header("WARC-Record-ID"))
                             response_record.rec_headers.add_header("WARC-IP-Address", ip_address)
@@ -119,7 +237,7 @@ class WarcScraper:
 
                             # Metadata record
                             timestamp = datetime.now().isoformat() + "Z"
-                            metadata_content = f"URL: {url}\nTimestamp: {timestamp}\nContent-Length: {len(response_text.encode('utf-8'))}\n"
+                            metadata_content = f"URL: {url}\nTimestamp: {timestamp}\nContent-Length: {len(combined_content.encode('utf-8'))}\nPages Scraped: {page_num}\n"
                             metadata_payload = BytesIO(metadata_content.encode("utf-8"))
                             metadata_record = writer.create_warc_record(
                                 f"urn:uuid:{str(uuid.uuid4())}",
@@ -130,11 +248,11 @@ class WarcScraper:
                             metadata_record.rec_headers.add_header("WARC-Concurrent-To", response_record.rec_headers.get_header("WARC-Record-ID"))
                             metadata_record.rec_headers.add_header("WARC-IP-Address", ip_address)
                             writer.write_record(metadata_record)
-                        if update_progress:
-                            update_progress(idx, total_links, f"Processed {idx}/{total_links}: {url}")
 
+                    if update_progress:
+                        update_progress(idx, total_links, f"Processed {idx}/{total_links}: {url}")
 
-                        print(f"Saved WARC file for {url} at {warc_file_path}")
+                    print(f"Saved WARC file for {url} at {warc_file_path}")
                 except Exception as e:
                     print(f"Failed to fetch {url}: {e}")
 
