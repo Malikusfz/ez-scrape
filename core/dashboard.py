@@ -176,8 +176,12 @@ def get_subproject_level_stats(output_root):
                         total_files += warc_count
                         total_bytes += warc_bytes
 
-                        # Tokens
+                        # Tokens - Check token.csv timestamp
                         tokens_csv_path = os.path.join(subproject_path, "tokens", "tokens.csv")
+                        if os.path.exists(tokens_csv_path):
+                            tokens_mtime = os.path.getmtime(tokens_csv_path)
+                            if tokens_mtime > last_modified:
+                                last_modified = tokens_mtime
                         total_tokens += get_token_count_from_csv(tokens_csv_path)
 
                         # Add a row for the subproject

@@ -27,7 +27,9 @@ class ProjectManager:
         project_path = os.path.join(self.output_root, current_project)
         return [
             subproject for subproject in os.listdir(project_path)
-            if os.path.isdir(os.path.join(project_path, subproject)) and subproject != 'compressed_files'
+            if os.path.isdir(os.path.join(project_path, subproject)) 
+            and subproject != 'compressed_files'
+            and subproject != '0_compressed_all'
         ]
 
     def create_subproject(self, current_project, new_subproject_name):

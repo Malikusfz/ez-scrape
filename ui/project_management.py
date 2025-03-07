@@ -16,6 +16,7 @@ def display_tree(output_root):
                 subproject
                 for subproject in sorted(os.listdir(project_path))
                 if os.path.isdir(os.path.join(project_path, subproject))
+                and subproject != "0_compressed_all"
             ]
             for subproject in subprojects:
                 st.write(f"* {subproject}")  # Display subproject name
